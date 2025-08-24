@@ -12,20 +12,64 @@ env:
   IMAGE_NAME: t089/swift-docker-builder
 
 jobs:
-  build-and-push:
+  create-amd64-runner:
+    name: Create Hetzner Cloud AMD64 runner
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    
+    outputs:
+      label: ${{ steps.create-hcloud-runner.outputs.label }}
+      server_id: ${{ steps.create-hcloud-runner.outputs.server_id }}
+    steps:
+      - name: Create AMD64 runner
+        id: create-hcloud-runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx31  # 4 vCPU, 8GB RAM, x86
+          location: nbg1
+          image: ubuntu-24.04
+
+  create-arm64-runner:
+    name: Create Hetzner Cloud ARM64 runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.create-hcloud-runner.outputs.label }}
+      server_id: ${{ steps.create-hcloud-runner.outputs.server_id }}
+    steps:
+      - name: Create ARM64 runner
+        id: create-hcloud-runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cax21  # 4 vCPU, 8GB RAM, ARM
+          location: nbg1
+          image: ubuntu-24.04
+
+  build-and-push:
+    name: Build and push images
+    needs: [create-amd64-runner, create-arm64-runner]
     strategy:
       matrix:
         swift-version: ["6.1.2", "6.0.3"]
         vips-version: ["8.15.5", "8.16.1", "8.17.1"]
+        include:
+          - arch: amd64
+            runner: ${{ needs.create-amd64-runner.outputs.label }}
+            platform: linux/amd64
+          - arch: arm64
+            runner: ${{ needs.create-arm64-runner.outputs.label }}
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -34,27 +78,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}
-      
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        run: |
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-${{ matrix.arch }}"
+          docker build \
+            --build-arg SWIFT_VERSION=${{ matrix.swift-version }} \
+            --build-arg VIPS_VERSION=${{ matrix.vips-version }} \
+            --platform ${{ matrix.platform }} \
+            --tag "$TAG" \
+            --push=${{ github.event_name != 'pull_request' }} \
+            .
+      
+      - name: Create manifest (AMD64 runner only)
+        if: matrix.arch == 'amd64' && github.event_name != 'pull_request'
+        run: |
+          MANIFEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}"
+          AMD64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-amd64"
+          ARM64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-arm64"
+          
+          # Wait a bit for ARM64 image to be available
+          sleep 30
+          
+          docker manifest create "$MANIFEST_TAG" \
+            "$AMD64_TAG" \
+            "$ARM64_TAG"
+          
+          docker manifest push "$MANIFEST_TAG"
+
+  delete-amd64-runner:
+    name: Delete Hetzner Cloud AMD64 runner
+    needs: [create-amd64-runner, build-and-push]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Delete AMD64 runner
+        uses: Cyclenerd/hcloud-github-runner@v1
         with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SWIFT_VERSION=${{ matrix.swift-version }}
-            VIPS_VERSION=${{ matrix.vips-version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          mode: delete
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-amd64-runner.outputs.label }}
+          server_id: ${{ needs.create-amd64-runner.outputs.server_id }}
+
+  delete-arm64-runner:
+    name: Delete Hetzner Cloud ARM64 runner
+    needs: [create-arm64-runner, build-and-push]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Delete ARM64 runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-arm64-runner.outputs.label }}
+          server_id: ${{ needs.create-arm64-runner.outputs.server_id }}

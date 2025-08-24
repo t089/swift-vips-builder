@@ -8,7 +8,12 @@ This repository contains a Dockerfile that builds Docker images for Swift develo
 
 ## Build and Push Workflow
 
-The GitHub Actions workflow (`.github/workflows/build-and-push.yml`) automatically builds and pushes Docker images to GitHub Container Registry (ghcr.io) with different combinations of Swift and libvips versions.
+The GitHub Actions workflow (`.github/workflows/build-and-push.yml`) uses Hetzner Cloud self-hosted runners to build native AMD64 and ARM64 images separately, then creates multi-arch manifests. This approach is much faster than emulated multi-arch builds.
+
+### Hetzner Cloud Setup
+Before using the workflow, you need to configure secrets as described in `HETZNER_SETUP.md`:
+- `PERSONAL_ACCESS_TOKEN`: GitHub PAT with repository administration access
+- `HCLOUD_TOKEN`: Hetzner Cloud API token with read/write permissions
 
 ### Available Version Combinations
 - Swift versions: 6.1.2, 6.0.3
