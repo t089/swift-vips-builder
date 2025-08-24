@@ -2,10 +2,9 @@
 # Build dependencies
 #
 ARG SWIFT_VERSION=6.1.2
-ARG VIPS_VERSION=8.16.0
-
 FROM public.ecr.aws/docker/library/swift:${SWIFT_VERSION}-noble AS deps
 
+ARG VIPS_VERSION=8.16.0
 ENV VIPS_VERSION=${VIPS_VERSION}
 
 
