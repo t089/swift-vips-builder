@@ -29,6 +29,18 @@ jobs:
           server_type: cpx31  # 4 vCPU, 8GB RAM, x86
           location: nbg1
           image: ubuntu-24.04
+          pre_runner_script: |
+            # Install Docker
+            apt-get update
+            apt-get install -y ca-certificates curl
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            chmod a+r /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update
+            apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            usermod -aG docker runner || true
+
 
   create-arm64-runner:
     name: Create Hetzner Cloud ARM64 runner
@@ -47,6 +59,17 @@ jobs:
           server_type: cax21  # 4 vCPU, 8GB RAM, ARM
           location: nbg1
           image: ubuntu-24.04
+          pre_runner_script: |
+            # Install Docker
+            apt-get update
+            apt-get install -y ca-certificates curl
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            chmod a+r /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update
+            apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            usermod -aG docker runner || true
 
   build-and-push:
     name: Build and push images
