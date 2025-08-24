@@ -73,21 +73,14 @@ jobs:
             apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
             usermod -aG docker runner || true
 
-  build-and-push:
-    name: Build and push images
-    needs: [create-amd64-runner, create-arm64-runner]
+  build-amd64:
+    name: Build AMD64 images
+    needs: create-amd64-runner
     strategy:
       matrix:
         swift-version: ["6.1.2", "6.0.3"]
         vips-version: ["8.15.5", "8.16.1", "8.17.1"]
-        include:
-          - arch: amd64
-            runner: ${{ needs.create-amd64-runner.outputs.label }}
-            platform: linux/amd64
-          - arch: arm64
-            runner: ${{ needs.create-arm64-runner.outputs.label }}
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ needs.create-amd64-runner.outputs.label }}
     
     steps:
       - name: Checkout repository
@@ -105,24 +98,72 @@ jobs:
       
       - name: Build and push Docker image
         run: |
-          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-${{ matrix.arch }}"
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-amd64"
           docker build \
             --build-arg SWIFT_VERSION=${{ matrix.swift-version }} \
             --build-arg VIPS_VERSION=${{ matrix.vips-version }} \
-            --platform ${{ matrix.platform }} \
+            --platform linux/amd64 \
             --tag "$TAG" \
             --push=${{ github.event_name != 'pull_request' }} \
             .
+
+  build-arm64:
+    name: Build ARM64 images
+    needs: create-arm64-runner
+    strategy:
+      matrix:
+        swift-version: ["6.1.2", "6.0.3"]
+        vips-version: ["8.15.5", "8.16.1", "8.17.1"]
+    runs-on: ${{ needs.create-arm64-runner.outputs.label }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
-      - name: Create manifest (AMD64 runner only)
-        if: matrix.arch == 'amd64' && github.event_name != 'pull_request'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        run: |
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-arm64"
+          docker build \
+            --build-arg SWIFT_VERSION=${{ matrix.swift-version }} \
+            --build-arg VIPS_VERSION=${{ matrix.vips-version }} \
+            --platform linux/arm64 \
+            --tag "$TAG" \
+            --push=${{ github.event_name != 'pull_request' }} \
+            .
+
+  create-manifests:
+    name: Create multi-arch manifests
+    needs: [build-amd64, build-arm64]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        swift-version: ["6.1.2", "6.0.3"]
+        vips-version: ["8.15.5", "8.16.1", "8.17.1"]
+    
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create and push manifest
         run: |
           MANIFEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}"
           AMD64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-amd64"
           ARM64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-arm64"
-          
-          # Wait a bit for ARM64 image to be available
-          sleep 30
           
           docker manifest create "$MANIFEST_TAG" \
             "$AMD64_TAG" \
@@ -132,7 +173,7 @@ jobs:
 
   delete-amd64-runner:
     name: Delete Hetzner Cloud AMD64 runner
-    needs: [create-amd64-runner, build-and-push]
+    needs: [create-amd64-runner, build-amd64, create-manifests]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
@@ -147,7 +188,7 @@ jobs:
 
   delete-arm64-runner:
     name: Delete Hetzner Cloud ARM64 runner
-    needs: [create-arm64-runner, build-and-push]
+    needs: [create-arm64-runner, build-arm64, create-manifests]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
