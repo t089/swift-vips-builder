@@ -29,6 +29,7 @@ jobs:
           server_type: cpx31  # 4 vCPU, 8GB RAM, x86
           location: nbg1
           image: ubuntu-24.04
+          ssh_key: 101152278
           pre_runner_script: |
             # Install Docker
             apt-get update
@@ -59,6 +60,7 @@ jobs:
           server_type: cax21  # 4 vCPU, 8GB RAM, ARM
           location: nbg1
           image: ubuntu-24.04
+          ssh_key: 101152278
           pre_runner_script: |
             # Install Docker
             apt-get update
