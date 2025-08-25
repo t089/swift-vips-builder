@@ -108,3 +108,6 @@ RUN curl -O -L -s --fail -v "https://github.com/libvips/libvips/releases/downloa
     meson compile && \
     meson install && \
     cd / && rm -rf vips-${VIPS_VERSION} vips-${VIPS_VERSION}.tar.xz
+
+# fixup clang
+RUN rm /usr/bin/clang && ln -s /usr/bin/clang-17 /usr/bin/clang
