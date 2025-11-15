@@ -26,7 +26,7 @@ jobs:
           mode: create
           github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          server_type: cpx31  # 4 vCPU, 8GB RAM, x86
+          server_type: cpx41  # 8 vCPU, 16GB RAM, x86
           location: nbg1
           image: ubuntu-24.04
           ssh_key: 101152278
@@ -57,7 +57,7 @@ jobs:
           mode: create
           github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          server_type: cax21  # 4 vCPU, 8GB RAM, ARM
+          server_type: cax31  # 8 vCPU, 16GB RAM, ARM
           location: nbg1
           image: ubuntu-24.04
           ssh_key: 101152278
@@ -87,27 +87,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Build and push Docker image
         run: |
           TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-amd64"
-          docker build \
+          docker buildx build \
             --build-arg SWIFT_VERSION=${{ matrix.swift-version }} \
             --build-arg VIPS_VERSION=${{ matrix.vips-version }} \
-            --platform linux/amd64 \
             --tag "$TAG" \
-            --push=${{ github.event_name != 'pull_request' }} \
+            --output type=docker \
             .
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            docker push "$TAG"
+          fi
 
   build-arm64:
     name: Build ARM64 images
@@ -119,31 +122,34 @@ jobs:
         swift-version: ["6.2.1"]
         vips-version: ["8.15.5", "8.16.1", "8.17.3"]
     runs-on: ${{ needs.create-arm64-runner.outputs.label }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Build and push Docker image
         run: |
           TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-arm64"
-          docker build \
+          docker buildx build \
             --build-arg SWIFT_VERSION=${{ matrix.swift-version }} \
             --build-arg VIPS_VERSION=${{ matrix.vips-version }} \
-            --platform linux/arm64 \
             --tag "$TAG" \
-            --push=${{ github.event_name != 'pull_request' }} \
+            --output type=docker \
             .
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            docker push "$TAG"
+          fi
 
   create-manifests:
     name: Create multi-arch manifests
