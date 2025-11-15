@@ -81,7 +81,7 @@ jobs:
       matrix:
         # when updating swift or vips versions make sure to also update below
         swift-version: ["6.2.1"]
-        vips-version: ["8.15.5", "8.16.1", "8.17.2"]
+        vips-version: ["8.15.5", "8.16.1", "8.17.3"]
     runs-on: ${{ needs.create-amd64-runner.outputs.label }}
     
     steps:
