@@ -80,7 +80,7 @@ jobs:
       max-parallel: 4
       matrix:
         # when updating swift or vips versions make sure to also update below
-        swift-version: ["6.2.1", "6.2.2", "6.2.3"]
+        swift-version: ["6.2.2", "6.2.3"]
         vips-version: ["8.15.5", "8.16.1", "8.17.3"]
     runs-on: ${{ needs.create-amd64-runner.outputs.label }}
     
@@ -119,7 +119,7 @@ jobs:
       max-parallel: 4
       matrix:
         # when updating swift or vips versions make sure to also update below
-        swift-version: ["6.2.1", "6.2.2", "6.2.3"]
+        swift-version: ["6.2.2", "6.2.3"]
         vips-version: ["8.15.5", "8.16.1", "8.17.3"]
     runs-on: ${{ needs.create-arm64-runner.outputs.label }}
 
@@ -158,7 +158,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        swift-version: ["6.2.1", "6.2.2", "6.2.3"]
+        swift-version: ["6.2.2", "6.2.3"]
         vips-version: ["8.15.5", "8.16.1", "8.17.3"]
     
     steps:
