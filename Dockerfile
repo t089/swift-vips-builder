@@ -1,12 +1,14 @@
 #
-# Build dependencies
+# Build dependencies in a plain Ubuntu image so the Swift toolchain
+# in the final stage is not polluted by a system clang install.
 #
 ARG SWIFT_VERSION=6.1.2
-FROM public.ecr.aws/docker/library/swift:${SWIFT_VERSION}-noble AS deps
-
 ARG VIPS_VERSION=8.16.0
-ENV VIPS_VERSION=${VIPS_VERSION}
 
+FROM public.ecr.aws/docker/library/ubuntu:noble AS builder
+
+ARG VIPS_VERSION
+ENV VIPS_VERSION=${VIPS_VERSION}
 
 ENV LIBJXL_VERSION=0.11.0
 ENV LIBJPEGTURBO_VERSION=2.1.5.1
@@ -18,6 +20,7 @@ ENV CPATH=/usr/local/include
 RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -q -y install \
   automake \
   build-essential \
+  ca-certificates \
   clang \
   curl \
   git \
@@ -70,8 +73,6 @@ RUN mkdir libjxl && cd libjxl && curl -Ls https://github.com/libjxl/libjxl/archi
        CC=clang CXX=clang++ cmake --build . -- -j$(nproc) && \
        CC=clang CXX=clang++ cmake --install . && \
        cd / && rm -rf libjxl
-      
-
 
 RUN mkdir libjasper && \
     cd libjasper && \
@@ -87,7 +88,7 @@ RUN mkdir libjasper && \
       cd .build && \
       make install \
       && cd / && rm -rf libjasper
-      
+
 RUN git clone https://github.com/LibRaw/LibRaw.git && \
     cd LibRaw && \
     git checkout ${LIBRAW_VERSION} && \
@@ -109,5 +110,36 @@ RUN curl -O -L -s --fail -v "https://github.com/libvips/libvips/releases/downloa
     meson install && \
     cd / && rm -rf vips-${VIPS_VERSION} vips-${VIPS_VERSION}.tar.xz
 
-# fixup clang
-RUN rm /usr/bin/clang && ln -s /usr/bin/clang-17 /usr/bin/clang
+
+#
+# Final image: official Swift toolchain + runtime/dev libs + artifacts from builder.
+# No system clang is installed here, so /usr/bin/clang stays as the Swift toolchain ships it.
+#
+FROM public.ecr.aws/docker/library/swift:${SWIFT_VERSION}-noble
+
+ARG VIPS_VERSION
+ENV VIPS_VERSION=${VIPS_VERSION}
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV CPATH=/usr/local/include
+
+RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -q -y install \
+  liblcms2-dev \
+  libexif-dev \
+  libexpat1-dev \
+  libfftw3-dev \
+  libglib2.0-dev \
+  libheif-dev \
+  libjpeg-turbo8-dev \
+  libpango1.0-dev \
+  libpng-dev \
+  libbrotli-dev \
+  libssl-dev \
+  libtiff5-dev \
+  libwebp-dev \
+  pkg-config \
+  zlib1g-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local /usr/local
+RUN ldconfig
