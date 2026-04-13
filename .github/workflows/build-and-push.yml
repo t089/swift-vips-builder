@@ -6,14 +6,110 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Rebuild images even if the tag already exists in the registry'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: t089/swift-vips-builder
 
 jobs:
+  compute-matrix:
+    name: Compute build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      amd64_matrix: ${{ steps.compute.outputs.amd64_matrix }}
+      arm64_matrix: ${{ steps.compute.outputs.arm64_matrix }}
+      manifest_matrix: ${{ steps.compute.outputs.manifest_matrix }}
+      needs_amd64: ${{ steps.compute.outputs.needs_amd64 }}
+      needs_arm64: ${{ steps.compute.outputs.needs_arm64 }}
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute matrix
+        id: compute
+        env:
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # when updating swift or vips versions, edit here only
+          SWIFT_VERSIONS=("6.2.4" "6.3.0")
+          AMD64_VIPS=("8.16.1" "8.17.3" "8.18.1" "8.18.2")
+          ARM64_VIPS=("8.16.1" "8.17.3" "8.18.2")
+
+          tag_exists() {
+            docker manifest inspect "${REGISTRY}/${IMAGE_NAME}:$1" >/dev/null 2>&1
+          }
+
+          should_build() {
+            if [ "$FORCE_REBUILD" = "true" ]; then
+              return 0
+            fi
+            if tag_exists "$1"; then
+              echo "  skip (exists): $1" >&2
+              return 1
+            fi
+            echo "  build: $1" >&2
+            return 0
+          }
+
+          amd64=()
+          echo "AMD64 tags:" >&2
+          for s in "${SWIFT_VERSIONS[@]}"; do
+            for v in "${AMD64_VIPS[@]}"; do
+              if should_build "swift-${s}-vips-${v}-amd64"; then
+                amd64+=("{\"swift-version\":\"${s}\",\"vips-version\":\"${v}\"}")
+              fi
+            done
+          done
+
+          arm64=()
+          echo "ARM64 tags:" >&2
+          for s in "${SWIFT_VERSIONS[@]}"; do
+            for v in "${ARM64_VIPS[@]}"; do
+              if should_build "swift-${s}-vips-${v}-arm64"; then
+                arm64+=("{\"swift-version\":\"${s}\",\"vips-version\":\"${v}\"}")
+              fi
+            done
+          done
+
+          manifest=()
+          echo "Manifest tags:" >&2
+          for s in "${SWIFT_VERSIONS[@]}"; do
+            for v in "${ARM64_VIPS[@]}"; do
+              # manifest needs both arches available
+              if ! printf '%s\n' "${AMD64_VIPS[@]}" | grep -qx "$v"; then
+                continue
+              fi
+              if should_build "swift-${s}-vips-${v}"; then
+                manifest+=("{\"swift-version\":\"${s}\",\"vips-version\":\"${v}\"}")
+              fi
+            done
+          done
+
+          join() { local IFS=,; echo "[$*]"; }
+
+          {
+            echo "amd64_matrix=$(join "${amd64[@]}")"
+            echo "arm64_matrix=$(join "${arm64[@]}")"
+            echo "manifest_matrix=$(join "${manifest[@]}")"
+            echo "needs_amd64=$([ ${#amd64[@]} -gt 0 ] && echo true || echo false)"
+            echo "needs_arm64=$([ ${#arm64[@]} -gt 0 ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
   create-amd64-runner:
     name: Create Hetzner Cloud AMD64 runner
+    needs: compute-matrix
+    if: needs.compute-matrix.outputs.needs_amd64 == 'true'
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-hcloud-runner.outputs.label }}
@@ -45,6 +141,8 @@ jobs:
 
   create-arm64-runner:
     name: Create Hetzner Cloud ARM64 runner
+    needs: compute-matrix
+    if: needs.compute-matrix.outputs.needs_arm64 == 'true'
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-hcloud-runner.outputs.label }}
@@ -75,15 +173,13 @@ jobs:
 
   build-amd64:
     name: Build AMD64 images
-    needs: create-amd64-runner
+    needs: [compute-matrix, create-amd64-runner]
     strategy:
       max-parallel: 4
       matrix:
-        # when updating swift or vips versions make sure to also update below
-        swift-version: ["6.2.4", "6.3.0"]
-        vips-version: ["8.16.1", "8.17.3", "8.18.1", "8.18.2"]
+        include: ${{ fromJSON(needs.compute-matrix.outputs.amd64_matrix) }}
     runs-on: ${{ needs.create-amd64-runner.outputs.label }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -114,13 +210,11 @@ jobs:
 
   build-arm64:
     name: Build ARM64 images
-    needs: create-arm64-runner
+    needs: [compute-matrix, create-arm64-runner]
     strategy:
       max-parallel: 4
       matrix:
-        # when updating swift or vips versions make sure to also update below
-        swift-version: ["6.2.4", "6.3.0"]
-        vips-version: ["8.16.1", "8.17.3", "8.18.2"]
+        include: ${{ fromJSON(needs.compute-matrix.outputs.arm64_matrix) }}
     runs-on: ${{ needs.create-arm64-runner.outputs.label }}
 
     steps:
@@ -153,14 +247,20 @@ jobs:
 
   create-manifests:
     name: Create multi-arch manifests
-    needs: [build-amd64, build-arm64]
-    if: github.event_name != 'pull_request'
+    needs: [compute-matrix, build-amd64, build-arm64]
+    if: |
+      github.event_name != 'pull_request' &&
+      always() &&
+      needs.build-amd64.result != 'failure' &&
+      needs.build-amd64.result != 'cancelled' &&
+      needs.build-arm64.result != 'failure' &&
+      needs.build-arm64.result != 'cancelled' &&
+      fromJSON(needs.compute-matrix.outputs.manifest_matrix)[0] != null
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        swift-version: ["6.2.3"]
-        vips-version: ["8.16.1", "8.17.3", "8.18.0"]
-    
+        include: ${{ fromJSON(needs.compute-matrix.outputs.manifest_matrix) }}
+
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -168,24 +268,24 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Create and push manifest
         run: |
           MANIFEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}"
           AMD64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-amd64"
           ARM64_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:swift-${{ matrix.swift-version }}-vips-${{ matrix.vips-version }}-arm64"
-          
+
           docker manifest create "$MANIFEST_TAG" \
             "$AMD64_TAG" \
             "$ARM64_TAG"
-          
+
           docker manifest push "$MANIFEST_TAG"
 
   delete-amd64-runner:
     name: Delete Hetzner Cloud AMD64 runner
     needs: [create-amd64-runner, build-amd64, create-manifests]
     runs-on: ubuntu-latest
-    if: ${{ always() }}
+    if: ${{ always() && needs.create-amd64-runner.result == 'success' }}
     steps:
       - name: Delete AMD64 runner
         uses: Cyclenerd/hcloud-github-runner@v1
@@ -200,7 +300,7 @@ jobs:
     name: Delete Hetzner Cloud ARM64 runner
     needs: [create-arm64-runner, build-arm64, create-manifests]
     runs-on: ubuntu-latest
-    if: ${{ always() }}
+    if: ${{ always() && needs.create-arm64-runner.result == 'success' }}
     steps:
       - name: Delete ARM64 runner
         uses: Cyclenerd/hcloud-github-runner@v1
