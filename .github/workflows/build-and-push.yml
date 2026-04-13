@@ -27,7 +27,7 @@ jobs:
           github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
           server_type: cpx41  # 8 vCPU, 16GB RAM, x86
-          location: nbg1
+          location: fsn1
           image: ubuntu-24.04
           ssh_key: 101152278
           pre_runner_script: |
